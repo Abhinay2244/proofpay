@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ProofPay</title>
+<body style="font-family:sans-serif;max-width:520px;margin:40px auto">
+<h1>ProofPay (test page)</h1>
+<div id="app"></div>
+<script>
+const app = document.getElementById("app");
+const dealId = new URLSearchParams(location.search).get("deal");
+
+async function api(path, method = "GET", body) {
+  const r = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+function showCreate() {
+  app.innerHTML = `
+    <input id="title" placeholder="Job title" style="width:100%"><br><br>
+    <input id="amount" placeholder="Amount in USD, e.g. 10.00"><br><br>
+    <textarea id="criteria" rows="4" style="width:100%" placeholder="One acceptance criterion per line"></textarea><br><br>
+    <button id="go">Create deal and pay</button>`;
+  document.getElementById("go").onclick = async () => {
+    try {
+      const deal = await api("/api/deals", "POST", {
+        title: document.getElementById("title").value,
+        amount: document.getElementById("amount").value,
+        criteria: document.getElementById("criteria").value.split("\n").filter(Boolean),
+      });
+      const { approveUrl } = await api(`/api/deals/${deal.id}/pay`, "POST");
+      location.href = approveUrl;
+    } catch (e) { alert(e.message); }
+  };
+}
+
+async function act(kind) {
+  try { await api(`/api/deals/${dealId}/${kind}`, "POST"); showDeal(); }
+  catch (e) { alert(e.message); }
+}
+
+async function showDeal() {
+  const deal = await api("/api/deals/" + dealId);
+  app.innerHTML = `<pre id="out"></pre>`;
+  document.getElementById("out").textContent = JSON.stringify(deal, null, 2);
+  if (deal.status === "funds_held") {
+    app.insertAdjacentHTML("beforeend",
+      `<button id="rel">Release money (capture)</button> <button id="ref">Refund (void)</button>`);
+    document.getElementById("rel").onclick = () => act("release");
+    document.getElementById("ref").onclick = () => act("refund");
+  }
+}
+
+dealId ? showDeal() : showCreate();
+</script>
+</body>

@@ -1,6 +1,7 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
 import * as paypal from "./paypalClient.js";
+import { verifyDeliverable } from "./verifier.js";
 
 const PORT = 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
@@ -27,8 +28,14 @@ function getDeal(id) {
   return deal;
 }
 
-function requireStatus(deal, status) {
-  if (deal.status !== status) throw fail(409, `Deal is "${deal.status}", expected "${status}"`);
+function requireStatus(deal, ...allowed) {
+  if (!allowed.includes(deal.status)) {
+    throw fail(409, `Deal is "${deal.status}", expected ${allowed.map((s) => `"${s}"`).join(" or ")}`);
+  }
+}
+
+function log(deal, text) {
+  deal.events.push({ time: new Date().toISOString(), text });
 }
 
 app.post("/api/deals", wrap(async (req, res) => {
@@ -43,7 +50,9 @@ app.post("/api/deals", wrap(async (req, res) => {
     criteria: criteria || [],
     status: "awaiting_payment",
     createdAt: new Date().toISOString(),
+    events: [],
   };
+  log(deal, "Deal created");
   deals.set(deal.id, deal);
   res.json(deal);
 }));
@@ -69,23 +78,46 @@ app.get("/paypal/return", wrap(async (req, res) => {
   if (deal.status === "awaiting_payment") {
     deal.authorizationId = await paypal.authorizeOrder(deal.orderId);
     deal.status = "funds_held";
+    log(deal, `Buyer paid $${deal.amount}. Funds held by PayPal`);
   }
   res.redirect(`/?deal=${deal.id}`);
 }));
 
+// Freelancer submits work. The AI checks it. The buyer still decides.
+app.post("/api/deals/:id/deliver", wrap(async (req, res) => {
+  const deal = getDeal(req.params.id);
+  requireStatus(deal, "funds_held", "delivered");
+  const deliverable = String(req.body.deliverable || "").trim();
+  if (!deliverable) throw fail(400, "Deliverable is empty");
+  if (deliverable.length > 8000) throw fail(400, "Deliverable is too long (max 8000 characters)");
+  if (!deal.criteria.length) throw fail(400, "This deal has no acceptance criteria");
+
+  deal.deliverable = deliverable;
+  deal.verification = await verifyDeliverable({
+    title: deal.title,
+    criteria: deal.criteria,
+    deliverable,
+  });
+  deal.status = "delivered";
+  log(deal, `Work submitted. AI verdict: ${deal.verification.verdict}`);
+  res.json(deal);
+}));
+
 app.post("/api/deals/:id/release", wrap(async (req, res) => {
   const deal = getDeal(req.params.id);
-  requireStatus(deal, "funds_held");
+  requireStatus(deal, "delivered");
   await paypal.captureAuthorization(deal.authorizationId);
   deal.status = "released";
+  log(deal, "Buyer approved. Payment released to the freelancer");
   res.json(deal);
 }));
 
 app.post("/api/deals/:id/refund", wrap(async (req, res) => {
   const deal = getDeal(req.params.id);
-  requireStatus(deal, "funds_held");
+  requireStatus(deal, "funds_held", "delivered");
   await paypal.voidAuthorization(deal.authorizationId);
   deal.status = "refunded";
+  log(deal, "Held funds released back to the buyer");
   res.json(deal);
 }));
 

@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>ProofPay</title>
-<body style="font-family:sans-serif;max-width:520px;margin:40px auto">
+<body style="font-family:sans-serif;max-width:560px;margin:40px auto">
 <h1>ProofPay (test page)</h1>
 <div id="app"></div>
 <script>
@@ -19,6 +19,13 @@ async function api(path, method = "GET", body) {
   return data;
 }
 
+function el(tag, text, style) {
+  const e = document.createElement(tag);
+  if (text !== undefined) e.textContent = text;
+  if (style) e.style.cssText = style;
+  return e;
+}
+
 function showCreate() {
   app.innerHTML = `
     <input id="title" placeholder="Job title" style="width:100%"><br><br>
@@ -30,7 +37,7 @@ function showCreate() {
       const deal = await api("/api/deals", "POST", {
         title: document.getElementById("title").value,
         amount: document.getElementById("amount").value,
-        criteria: document.getElementById("criteria").value.split("\n").filter(Boolean),
+        criteria: document.getElementById("criteria").value.split("\n").map((s) => s.trim()).filter(Boolean),
       });
       const { approveUrl } = await api(`/api/deals/${deal.id}/pay`, "POST");
       location.href = approveUrl;
@@ -38,21 +45,60 @@ function showCreate() {
   };
 }
 
-async function act(kind) {
-  try { await api(`/api/deals/${dealId}/${kind}`, "POST"); showDeal(); }
+async function act(kind, body, button, busyText) {
+  const original = button.textContent;
+  button.disabled = true;
+  if (busyText) button.textContent = busyText;
+  try { await api(`/api/deals/${dealId}/${kind}`, "POST", body); }
   catch (e) { alert(e.message); }
+  showDeal();
 }
 
 async function showDeal() {
   const deal = await api("/api/deals/" + dealId);
-  app.innerHTML = `<pre id="out"></pre>`;
-  document.getElementById("out").textContent = JSON.stringify(deal, null, 2);
-  if (deal.status === "funds_held") {
-    app.insertAdjacentHTML("beforeend",
-      `<button id="rel">Release money (capture)</button> <button id="ref">Refund (void)</button>`);
-    document.getElementById("rel").onclick = () => act("release");
-    document.getElementById("ref").onclick = () => act("refund");
+  app.replaceChildren();
+  app.append(el("h2", deal.title), el("p", `Amount: $${deal.amount}  |  Status: ${deal.status}`));
+
+  app.append(el("h3", "Acceptance criteria"));
+  const ul = el("ul");
+  deal.criteria.forEach((c) => ul.append(el("li", c)));
+  app.append(ul);
+
+  if (deal.verification) {
+    const v = deal.verification;
+    app.append(el("h3", `AI review: ${v.verdict.toUpperCase()}`));
+    v.results.forEach((r) => {
+      app.append(el("div", `${r.passed ? "PASS" : "FAIL"}: ${r.criterion}`, "font-weight:bold;margin-top:8px"));
+      app.append(el("div", r.reason, "color:#555"));
+    });
+    app.append(el("p", v.summary), el("p", "The AI only recommends. The buyer decides.", "color:#888;font-size:13px"));
   }
+
+  if (deal.status === "funds_held" || deal.status === "delivered") {
+    app.append(el("h3", deal.status === "funds_held" ? "Freelancer: submit your work" : "Freelancer: fix and resubmit if needed"));
+    const ta = el("textarea", "", "width:100%");
+    ta.rows = 6;
+    ta.placeholder = "Paste the delivered work here (text)";
+    ta.value = deal.deliverable || "";
+    const submit = el("button", deal.status === "funds_held" ? "Submit work for AI review" : "Resubmit");
+    submit.onclick = () => act("deliver", { deliverable: ta.value }, submit, "AI is reviewing...");
+    app.append(ta, el("br"), submit);
+
+    app.append(el("h3", "Buyer decision"));
+    if (deal.status === "delivered") {
+      const rel = el("button", "Release money (capture)");
+      rel.onclick = () => act("release", null, rel);
+      app.append(rel, " ");
+    }
+    const ref = el("button", "Refund (void)");
+    ref.onclick = () => act("refund", null, ref);
+    app.append(ref);
+  }
+
+  app.append(el("h3", "Timeline"));
+  const tl = el("ul");
+  deal.events.forEach((e) => tl.append(el("li", `${new Date(e.time).toLocaleTimeString()}  ${e.text}`)));
+  app.append(tl);
 }
 
 dealId ? showDeal() : showCreate();

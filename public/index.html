@@ -1,12 +1,112 @@
 <!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
-<title>ProofPay</title>
-<body style="font-family:sans-serif;max-width:560px;margin:40px auto">
-<h1>ProofPay (test page)</h1>
-<div id="app"></div>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProofPay: AI-verified escrow</title>
+<style>
+  :root {
+    --bg: #f5f6fa; --card: #ffffff; --text: #1b1f2a; --muted: #5d6578; --line: #e3e6ee;
+    --primary: #4f46e5; --primary-dark: #4338ca;
+    --green: #15803d; --green-bg: #e7f6ec; --red: #b91c1c; --red-bg: #fdecec;
+    --amber: #b45309; --amber-bg: #fdf3e1; --blue: #1d4ed8; --blue-bg: #e8effd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218; --card: #171b24; --text: #e8eaf0; --muted: #9aa3b5; --line: #2a3040;
+      --primary: #7c75f5; --primary-dark: #6b63ee;
+      --green: #4ade80; --green-bg: #12301f; --red: #f87171; --red-bg: #3a1618;
+      --amber: #fbbf24; --amber-bg: #34270f; --blue: #7aa7ff; --blue-bg: #14264a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.5; }
+  header { max-width: 720px; margin: 0 auto; padding: 28px 20px 8px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 24px; font-weight: 700; }
+  .logo { width: 34px; height: 34px; border-radius: 9px; background: var(--primary); color: #fff;
+    display: grid; place-items: center; font-size: 18px; }
+  .tag { color: var(--muted); margin: 6px 0 0; }
+  main { max-width: 720px; margin: 0 auto; padding: 12px 20px 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 22px; margin-top: 16px; }
+  h2 { margin: 0 0 4px; font-size: 20px; }
+  h3 { margin: 0 0 10px; font-size: 16px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+  label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
+  input, textarea { width: 100%; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit; }
+  input:focus, textarea:focus { outline: 2px solid var(--primary); border-color: transparent; }
+  textarea { resize: vertical; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  button { font: inherit; font-weight: 600; border-radius: 9px; padding: 10px 18px; cursor: pointer;
+    border: 1px solid transparent; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+  .btn-green { background: var(--green); color: #fff; }
+  .btn-outline { background: transparent; color: var(--red); border-color: var(--red); }
+  .btn-link { background: none; border: none; color: var(--primary); padding: 0; font-weight: 600; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .amount { font-size: 26px; font-weight: 700; }
+  .badge { display: inline-block; padding: 4px 11px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .b-amber { background: var(--amber-bg); color: var(--amber); }
+  .b-blue { background: var(--blue-bg); color: var(--blue); }
+  .b-green { background: var(--green-bg); color: var(--green); }
+  .b-red { background: var(--red-bg); color: var(--red); }
+  .steps { display: flex; gap: 6px; margin-top: 18px; }
+  .step { flex: 1; text-align: center; font-size: 12px; color: var(--muted); }
+  .bar { height: 6px; border-radius: 6px; background: var(--line); margin-bottom: 6px; }
+  .step.done .bar, .step.now .bar { background: var(--primary); }
+  .step.now { color: var(--text); font-weight: 600; }
+  ul.criteria { margin: 0; padding-left: 20px; }
+  ul.criteria li { margin: 4px 0; }
+  .verdict { border-radius: 10px; padding: 12px 14px; font-weight: 600; margin-bottom: 12px; }
+  .v-pass { background: var(--green-bg); color: var(--green); }
+  .v-fail { background: var(--red-bg); color: var(--red); }
+  .result { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .result:first-of-type { border-top: none; }
+  .pill { flex: none; height: 24px; padding: 0 9px; border-radius: 6px; font-size: 12px; font-weight: 700;
+    display: grid; place-items: center; }
+  .pill.pass { background: var(--green-bg); color: var(--green); }
+  .pill.fail { background: var(--red-bg); color: var(--red); }
+  .reason { color: var(--muted); font-size: 14px; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .role { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--primary); margin-bottom: 4px; }
+  .timeline { list-style: none; margin: 0; padding: 0; }
+  .timeline li { display: flex; gap: 12px; padding: 6px 0; font-size: 14px; }
+  .timeline time { color: var(--muted); flex: none; width: 74px; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--red);
+    color: #fff; padding: 12px 18px; border-radius: 10px; max-width: 90%; font-size: 14px; z-index: 10; }
+  footer { text-align: center; color: var(--muted); font-size: 13px; padding: 0 20px 30px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo">&#10003;</span> ProofPay</div>
+  <p class="tag">Pay safely for freelance work. The money is held until the work is checked.</p>
+</header>
+<main id="app"></main>
+<footer>PayPal Sandbox and Gemini. Test mode only, no real money moves.</footer>
+
 <script>
 const app = document.getElementById("app");
 const dealId = new URLSearchParams(location.search).get("deal");
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function toast(message) {
+  const t = el("div", "toast", message);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 5000);
+}
 
 async function api(path, method = "GET", body) {
   const r = await fetch(path, {
@@ -19,88 +119,199 @@ async function api(path, method = "GET", body) {
   return data;
 }
 
-function el(tag, text, style) {
-  const e = document.createElement(tag);
-  if (text !== undefined) e.textContent = text;
-  if (style) e.style.cssText = style;
-  return e;
-}
-
+/* ---------- Screen 1: create a deal ---------- */
 function showCreate() {
-  app.innerHTML = `
-    <input id="title" placeholder="Job title" style="width:100%"><br><br>
-    <input id="amount" placeholder="Amount in USD, e.g. 10.00"><br><br>
-    <textarea id="criteria" rows="4" style="width:100%" placeholder="One acceptance criterion per line"></textarea><br><br>
-    <button id="go">Create deal and pay</button>`;
-  document.getElementById("go").onclick = async () => {
+  app.replaceChildren();
+  const card = el("div", "card");
+  card.append(el("h2", "", "Start a new deal"));
+  card.append(el("p", "sub", "Agree on the job and the acceptance criteria. The buyer pays into escrow first."));
+
+  card.append(el("label", "", "Job title"));
+  const title = el("input"); title.placeholder = "e.g. Write a polite invoice email";
+  card.append(title);
+
+  card.append(el("label", "", "Amount (USD)"));
+  const amount = el("input"); amount.placeholder = "10.00"; amount.inputMode = "decimal";
+  card.append(amount);
+
+  card.append(el("label", "", "Acceptance criteria"));
+  const criteria = el("textarea"); criteria.rows = 4;
+  criteria.placeholder = "One criterion per line";
+  card.append(criteria);
+  card.append(el("div", "hint", "The AI checks the delivered work against each line, so keep them specific and checkable."));
+
+  const row = el("div", "row");
+  const go = el("button", "btn-primary", "Create deal and pay with PayPal");
+  const demo = el("button", "btn-link", "Use demo example");
+  demo.onclick = () => {
+    title.value = "Polite invoice email";
+    amount.value = "10.00";
+    criteria.value = 'Mentions the word "invoice"\nIs at least two sentences long\nIs written in a polite tone';
+  };
+  go.onclick = async () => {
+    go.disabled = true; go.textContent = "Creating deal...";
     try {
       const deal = await api("/api/deals", "POST", {
-        title: document.getElementById("title").value,
-        amount: document.getElementById("amount").value,
-        criteria: document.getElementById("criteria").value.split("\n").map((s) => s.trim()).filter(Boolean),
+        title: title.value.trim(),
+        amount: amount.value.trim(),
+        criteria: criteria.value.split("\n").map((s) => s.trim()).filter(Boolean),
       });
       const { approveUrl } = await api(`/api/deals/${deal.id}/pay`, "POST");
       location.href = approveUrl;
-    } catch (e) { alert(e.message); }
+    } catch (e) {
+      toast(e.message);
+      go.disabled = false; go.textContent = "Create deal and pay with PayPal";
+    }
   };
+  row.append(go, demo);
+  card.append(row);
+  app.append(card);
 }
+
+/* ---------- Screen 2: the deal ---------- */
+const STEPS = ["Created", "Funds held", "Delivered", "Decision"];
+const STEP_INDEX = { awaiting_payment: 0, funds_held: 1, delivered: 2, released: 3, refunded: 3 };
+const STATUS = {
+  awaiting_payment: ["Awaiting payment", "b-amber"],
+  funds_held: ["Funds held in escrow", "b-blue"],
+  delivered: ["Delivered, waiting for buyer", "b-blue"],
+  released: ["Released to freelancer", "b-green"],
+  refunded: ["Refunded to buyer", "b-red"],
+};
 
 async function act(kind, body, button, busyText) {
   const original = button.textContent;
   button.disabled = true;
-  if (busyText) button.textContent = busyText;
+  button.textContent = busyText || "Working...";
   try { await api(`/api/deals/${dealId}/${kind}`, "POST", body); }
-  catch (e) { alert(e.message); }
+  catch (e) { toast(e.message); button.disabled = false; button.textContent = original; return; }
   showDeal();
 }
 
 async function showDeal() {
-  const deal = await api("/api/deals/" + dealId);
-  app.replaceChildren();
-  app.append(el("h2", deal.title), el("p", `Amount: $${deal.amount}  |  Status: ${deal.status}`));
-
-  app.append(el("h3", "Acceptance criteria"));
-  const ul = el("ul");
-  deal.criteria.forEach((c) => ul.append(el("li", c)));
-  app.append(ul);
-
-  if (deal.verification) {
-    const v = deal.verification;
-    app.append(el("h3", `AI review: ${v.verdict.toUpperCase()}`));
-    v.results.forEach((r) => {
-      app.append(el("div", `${r.passed ? "PASS" : "FAIL"}: ${r.criterion}`, "font-weight:bold;margin-top:8px"));
-      app.append(el("div", r.reason, "color:#555"));
-    });
-    app.append(el("p", v.summary), el("p", "The AI only recommends. The buyer decides.", "color:#888;font-size:13px"));
+  let deal;
+  try { deal = await api("/api/deals/" + dealId); }
+  catch (e) {
+    app.replaceChildren();
+    const c = el("div", "card");
+    c.append(el("h2", "", "Deal not found"));
+    c.append(el("p", "sub", "This deal may have expired because the demo server restarted. Please start a new one."));
+    const b = el("button", "btn-primary", "Start a new deal");
+    b.onclick = () => (location.href = "/");
+    c.append(b); app.append(c);
+    return;
   }
+  app.replaceChildren();
 
+  // Summary card
+  const head = el("div", "card");
+  const top = el("div", "top");
+  const left = el("div");
+  left.append(el("h2", "", deal.title));
+  const [label, cls] = STATUS[deal.status] || [deal.status, "b-blue"];
+  left.append(el("span", `badge ${cls}`, label));
+  top.append(left, el("div", "amount", `$${deal.amount}`));
+  head.append(top);
+
+  const stepsBox = el("div", "steps");
+  const current = STEP_INDEX[deal.status] ?? 0;
+  STEPS.forEach((name, i) => {
+    const s = el("div", "step" + (i < current ? " done" : i === current ? " now" : ""));
+    s.append(el("div", "bar"), el("div", "", name));
+    stepsBox.append(s);
+  });
+  head.append(stepsBox);
+  app.append(head);
+
+  // Criteria
+  const cCard = el("div", "card");
+  cCard.append(el("h3", "", "Acceptance criteria"));
+  const ul = el("ul", "criteria");
+  deal.criteria.forEach((c) => ul.append(el("li", "", c)));
+  cCard.append(ul);
+  app.append(cCard);
+
+  // Freelancer delivery
   if (deal.status === "funds_held" || deal.status === "delivered") {
-    app.append(el("h3", deal.status === "funds_held" ? "Freelancer: submit your work" : "Freelancer: fix and resubmit if needed"));
-    const ta = el("textarea", "", "width:100%");
-    ta.rows = 6;
+    const d = el("div", "card");
+    d.append(el("div", "role", "Freelancer"));
+    d.append(el("h3", "", deal.status === "funds_held" ? "Submit your work" : "Fix and resubmit if needed"));
+    d.append(el("p", "sub", "The money is already held by PayPal, so you can start safely. Paste your delivered work for the AI to check."));
+    const ta = el("textarea"); ta.rows = 6;
     ta.placeholder = "Paste the delivered work here (text)";
     ta.value = deal.deliverable || "";
-    const submit = el("button", deal.status === "funds_held" ? "Submit work for AI review" : "Resubmit");
+    const submit = el("button", "btn-primary", deal.status === "funds_held" ? "Submit work for AI review" : "Resubmit for AI review");
     submit.onclick = () => act("deliver", { deliverable: ta.value }, submit, "AI is reviewing...");
-    app.append(ta, el("br"), submit);
-
-    app.append(el("h3", "Buyer decision"));
-    if (deal.status === "delivered") {
-      const rel = el("button", "Release money (capture)");
-      rel.onclick = () => act("release", null, rel);
-      app.append(rel, " ");
-    }
-    const ref = el("button", "Refund (void)");
-    ref.onclick = () => act("refund", null, ref);
-    app.append(ref);
+    const row = el("div", "row"); row.append(submit);
+    d.append(ta, row);
+    app.append(d);
   }
 
-  app.append(el("h3", "Timeline"));
-  const tl = el("ul");
-  deal.events.forEach((e) => tl.append(el("li", `${new Date(e.time).toLocaleTimeString()}  ${e.text}`)));
-  app.append(tl);
+  // AI review
+  if (deal.verification) {
+    const v = deal.verification;
+    const r = el("div", "card");
+    r.append(el("div", "role", "AI review"));
+    r.append(el("div", `verdict ${v.verdict === "pass" ? "v-pass" : "v-fail"}`,
+      v.verdict === "pass" ? "AI recommends: release the payment" : "AI recommends: do not release yet"));
+    v.results.forEach((x) => {
+      const row = el("div", "result");
+      row.append(el("div", `pill ${x.passed ? "pass" : "fail"}`, x.passed ? "PASS" : "FAIL"));
+      const text = el("div");
+      text.append(el("div", "", x.criterion), el("div", "reason", x.reason));
+      row.append(text);
+      r.append(row);
+    });
+    if (v.summary) r.append(el("p", "note", v.summary));
+    r.append(el("p", "note", "The AI only recommends. Only the buyer can release or refund the money."));
+    app.append(r);
+  }
+
+  // Buyer decision
+  if (deal.status === "funds_held" || deal.status === "delivered") {
+    const b = el("div", "card");
+    b.append(el("div", "role", "Buyer"));
+    b.append(el("h3", "", "Your decision"));
+    b.append(el("p", "sub", deal.status === "delivered"
+      ? "Review the AI result above, then decide. Release pays the freelancer. Refund returns the held money to you."
+      : "Waiting for the freelancer to submit work. You can still cancel and get your money back."));
+    const row = el("div", "row");
+    if (deal.status === "delivered") {
+      const rel = el("button", "btn-green", "Release payment");
+      rel.onclick = () => act("release", null, rel, "Releasing...");
+      row.append(rel);
+    }
+    const ref = el("button", "btn-outline", "Refund me");
+    ref.onclick = () => act("refund", null, ref, "Refunding...");
+    row.append(ref);
+    b.append(row);
+    app.append(b);
+  }
+
+  if (deal.status === "released" || deal.status === "refunded") {
+    const o = el("div", "card");
+    o.append(el("h3", "", deal.status === "released" ? "Payment released" : "Money returned to buyer"));
+    o.append(el("p", "sub", "This deal is finished."));
+    const again = el("button", "btn-primary", "Start a new deal");
+    again.onclick = () => (location.href = "/");
+    o.append(again);
+    app.append(o);
+  }
+
+  // Timeline
+  const t = el("div", "card");
+  t.append(el("h3", "", "Timeline"));
+  const tl = el("ul", "timeline");
+  deal.events.forEach((e) => {
+    const li = el("li");
+    li.append(el("time", "", new Date(e.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })), el("span", "", e.text));
+    tl.append(li);
+  });
+  t.append(tl);
+  app.append(t);
 }
 
 dealId ? showDeal() : showCreate();
 </script>
 </body>
+</html>

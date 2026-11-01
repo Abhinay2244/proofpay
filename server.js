@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as paypal from "./paypalClient.js";
 import { verifyDeliverable } from "./verifier.js";
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const app = express();
 app.use(express.json());

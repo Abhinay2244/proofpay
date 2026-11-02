@@ -30,7 +30,7 @@
   main { max-width: 720px; margin: 0 auto; padding: 12px 20px 60px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
     padding: 22px; margin-top: 16px; }
-  h2 { margin: 0 0 4px; font-size: 20px; }
+  h2 { margin: 0 0 6px; font-size: 20px; }
   h3 { margin: 0 0 10px; font-size: 16px; }
   .sub { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
   label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
@@ -41,11 +41,12 @@
   .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
   button { font: inherit; font-weight: 600; border-radius: 9px; padding: 10px 18px; cursor: pointer;
     border: 1px solid transparent; }
-  button:disabled { opacity: .6; cursor: wait; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
   .btn-primary { background: var(--primary); color: #fff; }
   .btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
   .btn-green { background: var(--green); color: #fff; }
   .btn-outline { background: transparent; color: var(--red); border-color: var(--red); }
+  .btn-secondary { background: transparent; color: var(--text); border-color: var(--line); }
   .btn-link { background: none; border: none; color: var(--primary); padding: 0; font-weight: 600; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
   .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
@@ -60,8 +61,8 @@
   .bar { height: 6px; border-radius: 6px; background: var(--line); margin-bottom: 6px; }
   .step.done .bar, .step.now .bar { background: var(--primary); }
   .step.now { color: var(--text); font-weight: 600; }
-  ul.criteria { margin: 0; padding-left: 20px; }
-  ul.criteria li { margin: 4px 0; }
+  ul.criteria, ol.criteria { margin: 0; padding-left: 20px; }
+  ul.criteria li, ol.criteria li { margin: 4px 0; }
   .verdict { border-radius: 10px; padding: 12px 14px; font-weight: 600; margin-bottom: 12px; }
   .v-pass { background: var(--green-bg); color: var(--green); }
   .v-fail { background: var(--red-bg); color: var(--red); }
@@ -72,9 +73,19 @@
   .pill.pass { background: var(--green-bg); color: var(--green); }
   .pill.fail { background: var(--red-bg); color: var(--red); }
   .reason { color: var(--muted); font-size: 14px; }
-  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
   .role { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
-    color: var(--primary); margin-bottom: 4px; }
+    color: var(--primary); margin-bottom: 6px; }
+  .banner { background: var(--amber-bg); color: var(--amber); border-radius: 10px; padding: 12px 14px;
+    margin-bottom: 12px; font-size: 14px; font-weight: 600; }
+  .box { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--bg);
+    white-space: pre-wrap; word-break: break-word; font-size: 14px; max-height: 260px; overflow: auto; }
+  .preview { max-width: 100%; max-height: 420px; border-radius: 10px; border: 1px solid var(--line);
+    margin-top: 12px; display: block; }
+  .linkrow { display: flex; gap: 8px; }
+  .linkrow input { flex: 1; }
+  .locked { display: flex; gap: 12px; align-items: center; }
+  .lock { font-size: 22px; }
   .timeline { list-style: none; margin: 0; padding: 0; }
   .timeline li { display: flex; gap: 12px; padding: 6px 0; font-size: 14px; }
   .timeline time { color: var(--muted); flex: none; width: 74px; }
@@ -93,8 +104,16 @@
 
 <script>
 const app = document.getElementById("app");
-const dealId = new URLSearchParams(location.search).get("deal");
+const params = new URLSearchParams(location.search);
+const dealId = params.get("deal");
+const dealKey = params.get("key");
+const MAX_FILE = 2 * 1024 * 1024;
+const draft = {};
+const ui = { showChange: false };
+let skew = 0;
+let fingerprint = "";
 
+/* ---------- helpers ---------- */
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -102,29 +121,142 @@ function el(tag, cls, text) {
   return e;
 }
 
+function button(text, cls, onclick) {
+  const b = el("button", cls, text);
+  b.onclick = onclick;
+  return b;
+}
+
 function toast(message) {
   const t = el("div", "toast", message);
   document.body.append(t);
-  setTimeout(() => t.remove(), 5000);
+  setTimeout(() => t.remove(), 5500);
 }
 
-async function api(path, method = "GET", body) {
-  const r = await fetch(path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || "Request failed");
+async function api(path, method = "GET", body, key = dealKey) {
+  const headers = { "Content-Type": "application/json" };
+  if (key) headers["x-deal-key"] = key;
+  const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  let data = {};
+  try { data = await r.json(); } catch (e) { /* empty body */ }
+  if (!r.ok) {
+    const err = new Error(data.error || "Request failed");
+    err.status = r.status;
+    throw err;
+  }
   return data;
 }
 
-/* ---------- Screen 1: create a deal ---------- */
+function fmtLeft(ms) {
+  if (ms <= 0) return "0:00";
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+function fmtSize(n) {
+  return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function timerLine(text, until) {
+  const p = el("p", "note");
+  p.append(text + " ");
+  const c = el("strong", "count");
+  c.dataset.until = String(until);
+  c.textContent = fmtLeft(until - (Date.now() + skew));
+  p.append(c);
+  return p;
+}
+
+setInterval(() => {
+  document.querySelectorAll(".count").forEach((c) => {
+    c.textContent = fmtLeft(Number(c.dataset.until) - (Date.now() + skew));
+  });
+}, 1000);
+
+function textarea(name, placeholder, rows, fallback) {
+  const t = el("textarea");
+  t.rows = rows;
+  t.placeholder = placeholder;
+  t.value = draft[name] !== undefined ? draft[name] : (fallback || "");
+  t.oninput = () => { draft[name] = t.value; };
+  return t;
+}
+
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve({ name: file.name, data: String(r.result).split(",")[1] });
+    r.onerror = () => reject(new Error("Could not read the file"));
+    r.readAsDataURL(file);
+  });
+}
+
+function saveBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function getFile(kind) {
+  const r = await fetch(`/api/deals/${dealId}/files/${kind}`, { headers: { "x-deal-key": dealKey } });
+  if (!r.ok) {
+    let message = "Could not load the file";
+    try { message = (await r.json()).error || message; } catch (e) { /* ignore */ }
+    throw new Error(message);
+  }
+  return r.blob();
+}
+
+function downloadButton(label, kind, name) {
+  return button(label, "btn-secondary", async () => {
+    try { saveBlob(await getFile(kind), name); } catch (e) { toast(e.message); }
+  });
+}
+
+function filePicker(slot, accept, current, label) {
+  const box = el("div");
+  const input = el("input");
+  input.type = "file";
+  input.accept = accept;
+  const info = el("div", "hint");
+  const refresh = () => {
+    info.textContent = draft[slot] ? `Selected: ${draft[slot].name}`
+      : current ? `Current file: ${current.name}. Choose a new one to replace it.` : `${label} (up to 2 MB)`;
+  };
+  input.onchange = async () => {
+    const f = input.files[0];
+    if (!f) { draft[slot] = undefined; refresh(); return; }
+    if (f.size > MAX_FILE) { toast("That file is too big. The limit is 2 MB."); input.value = ""; draft[slot] = undefined; refresh(); return; }
+    try { draft[slot] = await readFile(f); } catch (e) { toast(e.message); }
+    refresh();
+  };
+  refresh();
+  box.append(input, info);
+  return box;
+}
+
+/* ---------- create screen ---------- */
 function showCreate() {
   app.replaceChildren();
+
+  const how = el("div", "card");
+  how.append(el("h3", "", "How it works"));
+  const ol = el("ol", "criteria");
+  [
+    "The buyer pays into escrow. PayPal holds the money.",
+    "The freelancer submits work. AI checks it against the agreed criteria.",
+    "The buyer tests the work, then releases the payment or asks for changes.",
+  ].forEach((t) => ol.append(el("li", "", t)));
+  how.append(ol);
+  app.append(how);
+
   const card = el("div", "card");
   card.append(el("h2", "", "Start a new deal"));
-  card.append(el("p", "sub", "Agree on the job and the acceptance criteria. The buyer pays into escrow first."));
+  card.append(el("p", "sub", "You are the buyer. Agree on the job and criteria, then pay into escrow."));
 
   card.append(el("label", "", "Job title"));
   const title = el("input"); title.placeholder = "e.g. Write a polite invoice email";
@@ -135,10 +267,9 @@ function showCreate() {
   card.append(amount);
 
   card.append(el("label", "", "Acceptance criteria"));
-  const criteria = el("textarea"); criteria.rows = 4;
-  criteria.placeholder = "One criterion per line";
+  const criteria = el("textarea"); criteria.rows = 4; criteria.placeholder = "One criterion per line";
   card.append(criteria);
-  card.append(el("div", "hint", "The AI checks the delivered work against each line, so keep them specific and checkable."));
+  card.append(el("div", "hint", "The AI checks the work against each line, so keep them specific and checkable."));
 
   const row = el("div", "row");
   const go = el("button", "btn-primary", "Create deal and pay with PayPal");
@@ -151,12 +282,12 @@ function showCreate() {
   go.onclick = async () => {
     go.disabled = true; go.textContent = "Creating deal...";
     try {
-      const deal = await api("/api/deals", "POST", {
+      const created = await api("/api/deals", "POST", {
         title: title.value.trim(),
         amount: amount.value.trim(),
         criteria: criteria.value.split("\n").map((s) => s.trim()).filter(Boolean),
-      });
-      const { approveUrl } = await api(`/api/deals/${deal.id}/pay`, "POST");
+      }, null);
+      const { approveUrl } = await api(`/api/deals/${created.id}/pay`, "POST", null, created.buyerKey);
       location.href = approveUrl;
     } catch (e) {
       toast(e.message);
@@ -168,150 +299,376 @@ function showCreate() {
   app.append(card);
 }
 
-/* ---------- Screen 2: the deal ---------- */
+/* ---------- deal screen ---------- */
 const STEPS = ["Created", "Funds held", "Delivered", "Decision"];
-const STEP_INDEX = { awaiting_payment: 0, funds_held: 1, delivered: 2, released: 3, refunded: 3 };
+const STEP_INDEX = { awaiting_payment: 0, funds_held: 1, changes_requested: 1, delivered: 2, released: 3, refunded: 3 };
 const STATUS = {
   awaiting_payment: ["Awaiting payment", "b-amber"],
   funds_held: ["Funds held in escrow", "b-blue"],
-  delivered: ["Delivered, waiting for buyer", "b-blue"],
-  released: ["Released to freelancer", "b-green"],
+  changes_requested: ["Changes requested", "b-amber"],
+  delivered: ["Work delivered", "b-blue"],
+  released: ["Payment released", "b-green"],
   refunded: ["Refunded to buyer", "b-red"],
 };
+const isActive = (d) => ["funds_held", "changes_requested", "delivered"].includes(d.status);
+const verdictOf = (d) => (d.verification ? d.verification.verdict : null);
+const canSubmit = (d) => ["funds_held", "changes_requested"].includes(d.status)
+  || (d.status === "delivered" && verdictOf(d) === "fail");
 
-async function act(kind, body, button, busyText) {
-  const original = button.textContent;
-  button.disabled = true;
-  button.textContent = busyText || "Working...";
-  try { await api(`/api/deals/${dealId}/${kind}`, "POST", body); }
-  catch (e) { toast(e.message); button.disabled = false; button.textContent = original; return; }
-  showDeal();
+async function act(path, body, btn, busyText) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = busyText;
+  try {
+    await api(`/api/deals/${dealId}/${path}`, "POST", body);
+    await load();
+    return true;
+  } catch (e) {
+    toast(e.message);
+    btn.disabled = false;
+    btn.textContent = original;
+    return false;
+  }
 }
 
-async function showDeal() {
-  let deal;
-  try { deal = await api("/api/deals/" + dealId); }
-  catch (e) {
-    app.replaceChildren();
-    const c = el("div", "card");
-    c.append(el("h2", "", "Deal not found"));
-    c.append(el("p", "sub", "This deal may have expired because the demo server restarted. Please start a new one."));
-    const b = el("button", "btn-primary", "Start a new deal");
-    b.onclick = () => (location.href = "/");
-    c.append(b); app.append(c);
-    return;
-  }
-  app.replaceChildren();
-
-  // Summary card
-  const head = el("div", "card");
+function summaryCard(d) {
+  const card = el("div", "card");
   const top = el("div", "top");
   const left = el("div");
-  left.append(el("h2", "", deal.title));
-  const [label, cls] = STATUS[deal.status] || [deal.status, "b-blue"];
+  left.append(el("div", "role", d.role === "buyer" ? "You are the buyer" : "You are the freelancer"));
+  left.append(el("h2", "", d.title));
+  const [label, cls] = STATUS[d.status] || [d.status, "b-blue"];
   left.append(el("span", `badge ${cls}`, label));
-  top.append(left, el("div", "amount", `$${deal.amount}`));
-  head.append(top);
+  top.append(left, el("div", "amount", `$${d.amount}`));
+  card.append(top);
 
   const stepsBox = el("div", "steps");
-  const current = STEP_INDEX[deal.status] ?? 0;
+  const now = STEP_INDEX[d.status] ?? 0;
   STEPS.forEach((name, i) => {
-    const s = el("div", "step" + (i < current ? " done" : i === current ? " now" : ""));
+    const s = el("div", "step" + (i < now ? " done" : i === now ? " now" : ""));
     s.append(el("div", "bar"), el("div", "", name));
     stepsBox.append(s);
   });
-  head.append(stepsBox);
-  app.append(head);
+  card.append(stepsBox);
 
-  // Criteria
-  const cCard = el("div", "card");
-  cCard.append(el("h3", "", "Acceptance criteria"));
+  if (d.status === "funds_held" && d.deadlineAt) card.append(timerLine("Delivery deadline in", d.deadlineAt));
+  if (d.status === "changes_requested" && d.deadlineAt) card.append(timerLine("Time left to fix the work:", d.deadlineAt));
+  if (d.status === "delivered" && verdictOf(d) === "pass" && d.autoReleaseAt) {
+    card.append(timerLine(d.role === "buyer"
+      ? "Payment auto-releases to the freelancer unless you act, in"
+      : "Payment auto-releases to you unless the buyer objects, in", d.autoReleaseAt));
+  }
+  if (d.status === "delivered" && verdictOf(d) === "fail" && d.deadlineAt) card.append(timerLine("Fix deadline in", d.deadlineAt));
+  return card;
+}
+
+function criteriaCard(d) {
+  const c = el("div", "card");
+  c.append(el("h3", "", "Acceptance criteria"));
   const ul = el("ul", "criteria");
-  deal.criteria.forEach((c) => ul.append(el("li", "", c)));
-  cCard.append(ul);
-  app.append(cCard);
+  d.criteria.forEach((x) => ul.append(el("li", "", x)));
+  c.append(ul);
+  return c;
+}
 
-  // Freelancer delivery
-  if (deal.status === "funds_held" || deal.status === "delivered") {
-    const d = el("div", "card");
-    d.append(el("div", "role", "Freelancer"));
-    d.append(el("h3", "", deal.status === "funds_held" ? "Submit your work" : "Fix and resubmit if needed"));
-    d.append(el("p", "sub", "The money is already held by PayPal, so you can start safely. Paste your delivered work for the AI to check."));
-    const ta = el("textarea"); ta.rows = 6;
-    ta.placeholder = "Paste the delivered work here (text)";
-    ta.value = deal.deliverable || "";
-    const submit = el("button", "btn-primary", deal.status === "funds_held" ? "Submit work for AI review" : "Resubmit for AI review");
-    submit.onclick = () => act("deliver", { deliverable: ta.value }, submit, "AI is reviewing...");
-    const row = el("div", "row"); row.append(submit);
-    d.append(ta, row);
-    app.append(d);
-  }
+function reviewCard(d) {
+  const v = d.verification;
+  const buyer = d.role === "buyer";
+  const pass = v.verdict === "pass";
+  const c = el("div", "card");
+  c.append(el("div", "role", "AI review"));
+  c.append(el("div", `verdict ${pass ? "v-pass" : "v-fail"}`,
+    buyer ? (pass ? "AI recommends: release the payment" : "AI recommends: do not release yet")
+      : (pass ? "AI says your work meets every criterion" : "AI found problems. Fix and resubmit")));
+  v.results.forEach((x) => {
+    const row = el("div", "result");
+    row.append(el("div", `pill ${x.passed ? "pass" : "fail"}`, x.passed ? "PASS" : "FAIL"));
+    const text = el("div");
+    text.append(el("div", "", x.criterion), el("div", "reason", x.reason));
+    row.append(text);
+    c.append(row);
+  });
+  if (v.summary) c.append(el("p", "note", v.summary));
+  c.append(el("p", "note", "The AI only recommends. Only the buyer can release or refund the money."));
+  return c;
+}
 
-  // AI review
-  if (deal.verification) {
-    const v = deal.verification;
-    const r = el("div", "card");
-    r.append(el("div", "role", "AI review"));
-    r.append(el("div", `verdict ${v.verdict === "pass" ? "v-pass" : "v-fail"}`,
-      v.verdict === "pass" ? "AI recommends: release the payment" : "AI recommends: do not release yet"));
-    v.results.forEach((x) => {
-      const row = el("div", "result");
-      row.append(el("div", `pill ${x.passed ? "pass" : "fail"}`, x.passed ? "PASS" : "FAIL"));
-      const text = el("div");
-      text.append(el("div", "", x.criterion), el("div", "reason", x.reason));
-      row.append(text);
-      r.append(row);
-    });
-    if (v.summary) r.append(el("p", "note", v.summary));
-    r.append(el("p", "note", "The AI only recommends. Only the buyer can release or refund the money."));
-    app.append(r);
-  }
-
-  // Buyer decision
-  if (deal.status === "funds_held" || deal.status === "delivered") {
-    const b = el("div", "card");
-    b.append(el("div", "role", "Buyer"));
-    b.append(el("h3", "", "Your decision"));
-    b.append(el("p", "sub", deal.status === "delivered"
-      ? "Review the AI result above, then decide. Release pays the freelancer. Refund returns the held money to you."
-      : "Waiting for the freelancer to submit work. You can still cancel and get your money back."));
-    const row = el("div", "row");
-    if (deal.status === "delivered") {
-      const rel = el("button", "btn-green", "Release payment");
-      rel.onclick = () => act("release", null, rel, "Releasing...");
-      row.append(rel);
-    }
-    const ref = el("button", "btn-outline", "Refund me");
-    ref.onclick = () => act("refund", null, ref, "Refunding...");
-    row.append(ref);
-    b.append(row);
-    app.append(b);
-  }
-
-  if (deal.status === "released" || deal.status === "refunded") {
-    const o = el("div", "card");
-    o.append(el("h3", "", deal.status === "released" ? "Payment released" : "Money returned to buyer"));
-    o.append(el("p", "sub", "This deal is finished."));
-    const again = el("button", "btn-primary", "Start a new deal");
-    again.onclick = () => (location.href = "/");
-    o.append(again);
-    app.append(o);
-  }
-
-  // Timeline
+function timelineCard(d) {
   const t = el("div", "card");
   t.append(el("h3", "", "Timeline"));
   const tl = el("ul", "timeline");
-  deal.events.forEach((e) => {
+  d.events.forEach((e) => {
     const li = el("li");
     li.append(el("time", "", new Date(e.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })), el("span", "", e.text));
     tl.append(li);
   });
   t.append(tl);
-  app.append(t);
+  return t;
 }
 
-dealId ? showDeal() : showCreate();
+function finishedCard(d) {
+  const o = el("div", "card");
+  if (d.role === "buyer") {
+    o.append(el("h3", "", d.status === "released" ? "Payment released" : "Money returned to you"));
+    o.append(el("p", "sub", "This deal is finished."));
+    o.append(button("Start a new deal", "btn-primary", () => { location.href = "/"; }));
+  } else {
+    o.append(el("h3", "", d.status === "released" ? "You were paid" : "Deal cancelled"));
+    o.append(el("p", "sub", d.status === "released"
+      ? "The buyer released the payment. Nice work."
+      : "The held money went back to the buyer."));
+  }
+  return o;
+}
+
+/* The review copy: text and/or a file that the buyer can test before paying. */
+function copyCard(d, forBuyer) {
+  const c = el("div", "card");
+  c.append(el("h3", "", forBuyer ? "Review copy from the freelancer" : "Your review copy"));
+  if (forBuyer) c.append(el("p", "sub", "Test it now. The final files stay locked until you release the payment."));
+  if (d.reviewCopy) c.append(el("div", "box", d.reviewCopy));
+  if (d.reviewFile) {
+    if (d.reviewFile.mime.startsWith("image/")) {
+      const img = el("img", "preview");
+      img.alt = d.reviewFile.name;
+      getFile("review").then((b) => { img.src = URL.createObjectURL(b); }).catch(() => {});
+      c.append(img);
+    } else {
+      const row = el("div", "row");
+      row.append(downloadButton(`Open review file: ${d.reviewFile.name} (${fmtSize(d.reviewFile.size)})`, "review", d.reviewFile.name));
+      c.append(row);
+    }
+  }
+  return c;
+}
+
+/* ----- buyer sections ----- */
+function shareCard(d) {
+  const c = el("div", "card");
+  c.append(el("div", "role", "Buyer"), el("h3", "", "Send this link to your freelancer"));
+  c.append(el("p", "sub", "They can see the job and submit work. They cannot release or refund the money. Treat the link like a password."));
+  const row = el("div", "linkrow");
+  const input = el("input"); input.value = d.freelancerLink; input.readOnly = true;
+  input.onfocus = () => input.select();
+  const copy = button("Copy link", "btn-secondary", async () => {
+    try { await navigator.clipboard.writeText(d.freelancerLink); copy.textContent = "Copied"; }
+    catch (e) { input.select(); copy.textContent = "Press Ctrl+C"; }
+    setTimeout(() => { copy.textContent = "Copy link"; }, 1800);
+  });
+  row.append(input, copy);
+  c.append(row);
+  return c;
+}
+
+function lockedCard() {
+  const c = el("div", "card");
+  const row = el("div", "locked");
+  row.append(el("div", "lock", "\u{1F512}"));
+  const t = el("div");
+  t.append(el("h3", "", "Final files are locked"), el("p", "sub", "They unlock for download the moment you release the payment."));
+  row.append(t);
+  c.append(row);
+  return c;
+}
+
+function finalCard(d) {
+  const c = el("div", "card");
+  c.append(el("h3", "", "Final delivery unlocked"));
+  if (d.finalWork) c.append(el("div", "box", d.finalWork));
+  const row = el("div", "row");
+  if (d.finalFile) row.append(downloadButton(`Download ${d.finalFile.name} (${fmtSize(d.finalFile.size)})`, "final", d.finalFile.name));
+  if (d.finalWork) row.append(button("Download text as .txt", "btn-secondary", () => saveBlob(new Blob([d.finalWork], { type: "text/plain" }), "final-delivery.txt")));
+  c.append(row);
+  return c;
+}
+
+function buyerDecisionCard(d) {
+  const c = el("div", "card");
+  c.append(el("div", "role", "Buyer"), el("h3", "", "Your decision"));
+  const roundsLeft = d.maxChangeRounds - d.changeRequests;
+  c.append(el("p", "sub",
+    d.status === "funds_held" ? "Waiting for the freelancer to submit work. Your money is held safely by PayPal."
+      : d.status === "changes_requested" ? "You asked for changes. Waiting for the freelancer to resubmit."
+        : "Test the review copy above, then decide. Release pays the freelancer and unlocks the final files."));
+
+  const row = el("div", "row");
+  if (d.status === "delivered") {
+    const rel = button("Release payment", "btn-green", async () => {
+      if (!confirm("Release the payment to the freelancer? This cannot be undone.")) return;
+      await act("release", null, rel, "Releasing...");
+    });
+    row.append(rel);
+    if (roundsLeft > 0) {
+      row.append(button(ui.showChange ? "Cancel" : "Request changes", "btn-secondary", () => {
+        ui.showChange = !ui.showChange;
+        render(current);
+      }));
+    }
+  }
+  const ref = button("Refund me", "btn-outline", async () => {
+    await act("refund", null, ref, "Refunding...");
+  });
+  if (d.refundBlockedReason) ref.disabled = true;
+  row.append(ref);
+  c.append(row);
+
+  if (d.refundBlockedReason) c.append(el("p", "note", d.refundBlockedReason));
+  if (d.status === "delivered") {
+    c.append(el("p", "note", roundsLeft > 0
+      ? `${roundsLeft} change round${roundsLeft === 1 ? "" : "s"} left.`
+      : "No change rounds left. Release the payment when you are satisfied."));
+  }
+
+  if (ui.showChange && d.status === "delivered" && roundsLeft > 0) {
+    c.append(el("label", "", "What needs to change?"));
+    c.append(textarea("note", "Be specific, e.g. add a greeting with my name", 3));
+    const send = el("button", "btn-primary", "Send change request");
+    send.onclick = async () => {
+      const ok = await act("request-changes", { note: (draft.note || "").trim() }, send, "Sending...");
+      if (ok) { draft.note = ""; ui.showChange = false; }
+    };
+    const r2 = el("div", "row"); r2.append(send);
+    c.append(r2);
+  }
+  return c;
+}
+
+function renderBuyer(d) {
+  app.append(criteriaCard(d));
+  if (isActive(d)) app.append(shareCard(d));
+  if (d.reviewCopy || d.reviewFile) app.append(copyCard(d, true));
+  if (d.verification) app.append(reviewCard(d));
+  if (d.status === "released") { if (d.hasFinalWork) app.append(finalCard(d)); }
+  else if (d.hasFinalWork) app.append(lockedCard());
+  app.append(isActive(d) ? buyerDecisionCard(d) : finishedCard(d));
+}
+
+/* ----- freelancer sections ----- */
+function submitCard(d) {
+  const c = el("div", "card");
+  c.append(el("div", "role", "Freelancer"));
+  c.append(el("h3", "", d.status === "delivered" ? "Fix and resubmit" : "Submit your work"));
+  c.append(el("p", "sub", "Review copy: the buyer can test this before the payment is released, and the AI checks it. Final work: stays locked until the buyer releases the payment."));
+
+  c.append(el("label", "", "Review copy: text"));
+  c.append(textarea("review", "Write or paste the work for the buyer to test", 5, d.reviewCopy));
+  c.append(el("label", "", "Review copy: file (image, PDF or text)"));
+  c.append(filePicker("reviewFile", "image/png,image/jpeg,image/webp,application/pdf,.txt,.md", d.reviewFile, "Optional. The AI can read images and PDFs"));
+
+  c.append(el("label", "", "Final work: text (optional, locked until payment)"));
+  c.append(textarea("final", "Paste the final deliverable here", 3, d.finalWork));
+  c.append(el("label", "", "Final work: file (optional, any type, locked until payment)"));
+  c.append(filePicker("finalFile", "", d.finalFile, "Optional. Any file type"));
+
+  const submit = el("button", "btn-primary", d.status === "delivered" ? "Resubmit for AI review" : "Submit for AI review");
+  submit.onclick = async () => {
+    const body = { reviewCopy: draft.review ?? d.reviewCopy, finalWork: draft.final ?? d.finalWork };
+    if (draft.reviewFile) body.reviewFile = draft.reviewFile;
+    if (draft.finalFile) body.finalFile = draft.finalFile;
+    const ok = await act("deliver", body, submit, "AI is reviewing...");
+    if (ok) { draft.reviewFile = undefined; draft.finalFile = undefined; }
+  };
+  const row = el("div", "row"); row.append(submit);
+  c.append(row);
+  return c;
+}
+
+function renderFreelancer(d) {
+  app.append(criteriaCard(d));
+  if (isActive(d)) {
+    const info = el("div", "card");
+    info.append(el("div", "role", "Freelancer"));
+    info.append(el("h3", "", "The client has paid"));
+    info.append(el("p", "sub", `$${d.amount} is held by PayPal. You get paid when the buyer approves your work, so you can start safely.`));
+    app.append(info);
+  }
+  if (d.status === "changes_requested") {
+    const c = el("div", "card");
+    c.append(el("div", "banner", "The buyer asked for changes"), el("div", "box", d.changeNote));
+    app.append(c);
+  }
+  if (d.reviewCopy || d.reviewFile) app.append(copyCard(d, false));
+  if (d.verification) app.append(reviewCard(d));
+  if (d.status === "delivered" && verdictOf(d) === "pass") {
+    const w = el("div", "card");
+    w.append(el("h3", "", "Waiting for the buyer's decision"), el("p", "sub", "The buyer is testing your review copy. If they do nothing, the payment releases automatically."));
+    app.append(w);
+  }
+  if (canSubmit(d)) app.append(submitCard(d));
+  if (!isActive(d)) app.append(finishedCard(d));
+}
+
+function renderWaitingForPayment(d) {
+  app.append(criteriaCard(d));
+  const c = el("div", "card");
+  if (d.role === "buyer") {
+    c.append(el("div", "role", "Buyer"), el("h3", "", "Complete your payment"));
+    c.append(el("p", "sub", "Your money is held by PayPal until the work is approved."));
+    const pay = el("button", "btn-primary", "Pay with PayPal");
+    pay.onclick = async () => {
+      pay.disabled = true;
+      try { const r = await api(`/api/deals/${dealId}/pay`, "POST"); location.href = r.approveUrl; }
+      catch (e) { toast(e.message); pay.disabled = false; }
+    };
+    c.append(pay);
+  } else {
+    c.append(el("h3", "", "Waiting for the client to pay"), el("p", "sub", "This page updates by itself when the money is held in escrow."));
+  }
+  app.append(c);
+}
+
+let current = null;
+const fp = (d) => `${d.status}|${d.events.length}|${d.changeRequests}|${verdictOf(d) || ""}`;
+
+function render(d) {
+  current = d;
+  skew = d.now - Date.now();
+  fingerprint = fp(d);
+  app.replaceChildren();
+  app.append(summaryCard(d));
+  if (d.status === "awaiting_payment") renderWaitingForPayment(d);
+  else if (d.role === "buyer") renderBuyer(d);
+  else renderFreelancer(d);
+  app.append(timelineCard(d));
+}
+
+function showProblem(e) {
+  app.replaceChildren();
+  const c = el("div", "card");
+  c.append(el("h2", "", e.status === 404 ? "Deal not found" : "This link is not valid"));
+  c.append(el("p", "sub", e.status === 404
+    ? "The demo server may have restarted, which clears deals. Please start a new one."
+    : "Ask for the correct link, or start a new deal."));
+  c.append(button("Start a new deal", "btn-primary", () => { location.href = "/"; }));
+  app.append(c);
+}
+
+async function load() {
+  try { render(await api(`/api/deals/${dealId}`)); }
+  catch (e) { showProblem(e); throw e; }
+}
+
+async function poll() {
+  if (document.hidden || !dealId || !current) return;
+  if (current.status === "released" || current.status === "refunded") return;
+  try {
+    const d = await api(`/api/deals/${dealId}`);
+    if (fp(d) !== fingerprint) render(d);
+    else skew = d.now - Date.now();
+  } catch (e) { /* ignore network blips */ }
+}
+
+const NOTICES = {
+  payment_failed: "The PayPal payment was not completed. Please try paying again.",
+  payment_cancelled: "Payment cancelled. You can pay again when you are ready.",
+  deal_not_found: "That deal was not found.",
+  bad_link: "That link is not valid.",
+};
+const notice = params.get("notice");
+if (notice && NOTICES[notice]) setTimeout(() => toast(NOTICES[notice]), 300);
+
+if (dealId) { load().catch(() => {}); setInterval(poll, 4000); }
+else showCreate();
 </script>
 </body>
 </html>

@@ -19,6 +19,12 @@ const MAX_DEALS = 500;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;       // per file
 const MAX_TOTAL_BYTES = 120 * 1024 * 1024;    // all files on the server
 
+// Platform fee kept by ProofPay when the payment is released. Set PLATFORM_FEE_PERCENT=0 for no fee.
+const feeSetting = Number(process.env.PLATFORM_FEE_PERCENT ?? 5);
+const FEE_PERCENT = Number.isFinite(feeSetting) ? Math.min(Math.max(feeSetting, 0), 20) : 5;
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const app = express();
 app.use(express.json({ limit: "7mb" })); // two 2 MB files become about 5.4 MB as base64
 app.use(express.static("public"));
@@ -73,6 +79,53 @@ async function withLock(deal, fn) {
   }
 }
 
+function cleanEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!EMAIL_RE.test(email) || email.length > 254) throw fail(400, "Enter the PayPal email where you want to be paid");
+  return email;
+}
+
+/* ---------------- Money ---------------- */
+
+const toCents = (amount) => Math.round(Number(amount) * 100);
+const fromCents = (cents) => (cents / 100).toFixed(2);
+
+// Pays the freelancer. Never throws: a failure is recorded so the payout can be retried.
+async function sendPayoutFor(deal) {
+  const gross = toCents(deal.amount);
+  const fee = Math.round((gross * FEE_PERCENT) / 100);
+  const net = gross - fee;
+  deal.payoutAttempts = (deal.payoutAttempts || 0) + 1;
+  deal.payout = { status: "sending", gross: fromCents(gross), fee: fromCents(fee), net: fromCents(net), checks: 0, error: "" };
+  try {
+    const r = await paypal.sendPayout({
+      batchId: `proofpay-${deal.id}-${deal.payoutAttempts}`,
+      email: deal.payoutEmail,
+      amount: fromCents(net),
+      note: `ProofPay: ${deal.title}`.slice(0, 160),
+      itemId: `${deal.id}-${deal.payoutAttempts}`,
+    });
+    deal.payout.batchId = r.batchId;
+    deal.payout.status = "pending";
+    log(deal, `Payout of $${deal.payout.net} sent to the freelancer (platform fee $${deal.payout.fee})`);
+  } catch (e) {
+    console.error("Payout failed", e.details || e);
+    deal.payout.status = "failed";
+    deal.payout.error = String(e.message || "Payout failed").slice(0, 200);
+    log(deal, "Payout to the freelancer failed. The payment is captured, so the payout can be retried");
+  }
+}
+
+// Capture the held payment, then pay the freelancer.
+async function settleRelease(deal, message) {
+  await paypal.captureAuthorization(deal.authorizationId);
+  deal.status = "released";
+  deal.deadlineAt = null;
+  deal.autoReleaseAt = null;
+  log(deal, message);
+  await sendPayoutFor(deal);
+}
+
 /* ---------------- Files ---------------- */
 
 const fileBytes = (deal) => (deal.reviewFile?.size || 0) + (deal.finalFile?.size || 0);
@@ -119,6 +172,7 @@ function viewFor(deal, role) {
     role,
     title: deal.title,
     amount: deal.amount,
+    feePercent: FEE_PERCENT,
     criteria: deal.criteria,
     status: deal.status,
     events: deal.events,
@@ -133,12 +187,16 @@ function viewFor(deal, role) {
     autoReleaseAt: deal.autoReleaseAt,
     now: Date.now(),
     refundBlockedReason: refundBlockedReason(deal),
+    payout: deal.payout
+      ? { status: deal.payout.status, gross: deal.payout.gross, fee: deal.payout.fee, net: deal.payout.net, error: deal.payout.error }
+      : null,
   };
   // The final files stay locked for the buyer until the payment is released.
   if (unlocked) {
     view.finalWork = deal.finalWork || "";
     view.finalFile = deal.finalFile ? { name: deal.finalFile.name, size: deal.finalFile.size } : null;
   }
+  if (role === "freelancer") view.payoutEmail = deal.payoutEmail || "";
   if (role === "buyer") {
     view.freelancerLink = `${BASE_URL}/?deal=${deal.id}&key=${deal.freelancerKey}`;
     view.buyerLink = `${BASE_URL}/?deal=${deal.id}&key=${deal.buyerKey}`;
@@ -261,6 +319,7 @@ app.post("/api/deals/:id/deliver", wrap(async (req, res) => {
         ? "The AI already passed this work. Wait for the buyer's decision."
         : `Work can't be submitted while the deal is "${deal.status}"`);
     }
+    const payoutEmail = cleanEmail(req.body.payoutEmail || deal.payoutEmail);
     const reviewText = String(req.body.reviewCopy || "").trim();
     const finalText = String(req.body.finalWork || "").trim();
     if (reviewText.length > 8000) throw fail(400, "The review text is too long (max 8000 characters)");
@@ -295,6 +354,7 @@ app.post("/api/deals/:id/deliver", wrap(async (req, res) => {
       file: attach,
     });
 
+    deal.payoutEmail = payoutEmail;
     deal.reviewCopy = reviewText;
     deal.reviewFile = reviewFile;
     deal.finalWork = finalText;
@@ -336,13 +396,21 @@ app.post("/api/deals/:id/release", wrap(async (req, res) => {
   auth(req, deal, "buyer");
   await withLock(deal, async () => {
     if (deal.status !== "delivered") throw fail(409, "There is no delivered work to release payment for");
-    await paypal.captureAuthorization(deal.authorizationId);
-    deal.status = "released";
-    deal.deadlineAt = null;
-    deal.autoReleaseAt = null;
-    log(deal, "Buyer approved. Payment released and final files unlocked");
+    await settleRelease(deal, "Buyer approved. Payment released and final files unlocked");
   });
   res.json(viewFor(deal, "buyer"));
+}));
+
+// Retry a failed payout. The freelancer can also correct their PayPal email.
+app.post("/api/deals/:id/retry-payout", wrap(async (req, res) => {
+  const deal = getDeal(req.params.id);
+  const role = auth(req, deal);
+  await withLock(deal, async () => {
+    if (deal.status !== "released" || deal.payout?.status !== "failed") throw fail(409, "There is no failed payout to retry");
+    if (role === "freelancer" && req.body.email) deal.payoutEmail = cleanEmail(req.body.email);
+    await sendPayoutFor(deal);
+  });
+  res.json(viewFor(deal, role));
 }));
 
 app.post("/api/deals/:id/refund", wrap(async (req, res) => {
@@ -386,14 +454,12 @@ setInterval(async () => {
         if (missedDeadline) {
           await paypal.voidAuthorization(deal.authorizationId);
           deal.status = "refunded";
+          deal.deadlineAt = null;
+          deal.autoReleaseAt = null;
           log(deal, "Deadline passed without approved work. Held money returned to the buyer");
         } else {
-          await paypal.captureAuthorization(deal.authorizationId);
-          deal.status = "released";
-          log(deal, "Review window ended with no objection. Payment auto-released to the freelancer");
+          await settleRelease(deal, "Review window ended with no objection. Payment auto-released to the freelancer");
         }
-        deal.deadlineAt = null;
-        deal.autoReleaseAt = null;
       });
     } catch (e) {
       console.error("Automatic settlement failed", e.details || e);
@@ -402,5 +468,31 @@ setInterval(async () => {
     }
   }
 }, 15000);
+
+// Follow payouts until PayPal says whether the money arrived.
+setInterval(async () => {
+  for (const deal of deals.values()) {
+    const p = deal.payout;
+    if (!p || p.status !== "pending" || deal.busy || deal.polling || p.checks > 180) continue;
+    deal.polling = true;
+    try {
+      p.checks += 1;
+      const r = await paypal.getPayout(p.batchId);
+      const item = r.itemStatus;
+      if (item === "SUCCESS") {
+        p.status = "paid";
+        log(deal, `Freelancer paid $${p.net}`);
+      } else if (["FAILED", "RETURNED", "BLOCKED", "DENIED", "REFUNDED", "UNCLAIMED", "ONHOLD"].includes(item) || r.batchStatus === "DENIED") {
+        p.status = "failed";
+        p.error = r.error || (item === "UNCLAIMED" ? "That email has no PayPal account yet" : `PayPal status: ${item || r.batchStatus}`);
+        log(deal, "Payout failed. Check the PayPal email and retry");
+      }
+    } catch (e) {
+      console.error("Could not check the payout", e.details || e);
+    } finally {
+      deal.polling = false;
+    }
+  }
+}, 10000);
 
 app.listen(PORT, () => console.log(`ProofPay running at ${BASE_URL}`));

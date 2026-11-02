@@ -86,6 +86,9 @@
   .linkrow input { flex: 1; }
   .locked { display: flex; gap: 12px; align-items: center; }
   .lock { font-size: 22px; }
+  .money { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; }
+  .money div { font-size: 13px; color: var(--muted); }
+  .money strong { display: block; font-size: 18px; color: var(--text); }
   .timeline { list-style: none; margin: 0; padding: 0; }
   .timeline li { display: flex; gap: 12px; padding: 6px 0; font-size: 14px; }
   .timeline time { color: var(--muted); flex: none; width: 74px; }
@@ -184,6 +187,15 @@ function textarea(name, placeholder, rows, fallback) {
   return t;
 }
 
+function textInput(name, placeholder, fallback) {
+  const i = el("input");
+  i.type = "email";
+  i.placeholder = placeholder;
+  i.value = draft[name] !== undefined ? draft[name] : (fallback || "");
+  i.oninput = () => { draft[name] = i.value; };
+  return i;
+}
+
 function readFile(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -250,6 +262,7 @@ function showCreate() {
     "The buyer pays into escrow. PayPal holds the money.",
     "The freelancer submits work. AI checks it against the agreed criteria.",
     "The buyer tests the work, then releases the payment or asks for changes.",
+    "On release, the freelancer is paid straight to their PayPal account.",
   ].forEach((t) => ol.append(el("li", "", t)));
   how.append(ol);
   app.append(how);
@@ -413,12 +426,52 @@ function finishedCard(d) {
     o.append(el("p", "sub", "This deal is finished."));
     o.append(button("Start a new deal", "btn-primary", () => { location.href = "/"; }));
   } else {
-    o.append(el("h3", "", d.status === "released" ? "You were paid" : "Deal cancelled"));
-    o.append(el("p", "sub", d.status === "released"
-      ? "The buyer released the payment. Nice work."
-      : "The held money went back to the buyer."));
+    o.append(el("h3", "", "Deal cancelled"));
+    o.append(el("p", "sub", "The held money went back to the buyer."));
   }
   return o;
+}
+
+/* The payout: what the freelancer actually receives. */
+function payoutCard(d) {
+  const p = d.payout;
+  const freelancer = d.role === "freelancer";
+  const c = el("div", "card");
+  c.append(el("div", "role", "Payout"));
+
+  if (!p || p.status === "sending") {
+    c.append(el("h3", "", "Sending the payout..."));
+    c.append(el("p", "sub", "The payment was captured. The freelancer is being paid now."));
+    return c;
+  }
+
+  const heading = p.status === "paid" ? (freelancer ? "You were paid" : "The freelancer was paid")
+    : p.status === "pending" ? "Payout on its way"
+      : "The payout needs attention";
+  c.append(el("h3", "", heading));
+
+  const money = el("div", "money");
+  [["Payment", `$${p.gross}`], ["Platform fee", `$${p.fee}`], [freelancer ? "You receive" : "Freelancer receives", `$${p.net}`]].forEach(([k, v]) => {
+    const box = el("div"); box.append(el("strong", "", v), document.createTextNode(k)); money.append(box);
+  });
+  c.append(money);
+
+  if (p.status === "pending") c.append(el("p", "note", "PayPal is delivering the money. This page updates by itself."));
+  if (p.status === "paid") c.append(el("p", "note", "The money is in the freelancer's PayPal account."));
+
+  if (p.status === "failed") {
+    c.append(el("div", "banner", p.error || "The payout did not go through"));
+    c.append(el("p", "note", "Your payment is safe. The held money was captured, and the payout can be retried."));
+    if (freelancer) {
+      c.append(el("label", "", "Your PayPal email"));
+      c.append(textInput("retryEmail", "you@example.com", d.payoutEmail));
+    }
+    const retry = el("button", "btn-primary", "Retry payout");
+    retry.onclick = () => act("retry-payout", freelancer ? { email: (draft.retryEmail ?? d.payoutEmail ?? "").trim() } : {}, retry, "Retrying...");
+    const row = el("div", "row"); row.append(retry);
+    c.append(row);
+  }
+  return c;
 }
 
 /* The review copy: text and/or a file that the buyer can test before paying. */
@@ -538,17 +591,36 @@ function renderBuyer(d) {
   if (isActive(d)) app.append(shareCard(d));
   if (d.reviewCopy || d.reviewFile) app.append(copyCard(d, true));
   if (d.verification) app.append(reviewCard(d));
-  if (d.status === "released") { if (d.hasFinalWork) app.append(finalCard(d)); }
-  else if (d.hasFinalWork) app.append(lockedCard());
+  if (d.status === "released") {
+    if (d.hasFinalWork) app.append(finalCard(d));
+    app.append(payoutCard(d));
+  } else if (d.hasFinalWork) {
+    app.append(lockedCard());
+  }
   app.append(isActive(d) ? buyerDecisionCard(d) : finishedCard(d));
 }
 
 /* ----- freelancer sections ----- */
+function netFor(d) {
+  const gross = Math.round(Number(d.amount) * 100);
+  const fee = Math.round((gross * d.feePercent) / 100);
+  return { fee: (fee / 100).toFixed(2), net: ((gross - fee) / 100).toFixed(2) };
+}
+
 function submitCard(d) {
   const c = el("div", "card");
   c.append(el("div", "role", "Freelancer"));
   c.append(el("h3", "", d.status === "delivered" ? "Fix and resubmit" : "Submit your work"));
   c.append(el("p", "sub", "Review copy: the buyer can test this before the payment is released, and the AI checks it. Final work: stays locked until the buyer releases the payment."));
+
+  c.append(el("label", "", "Your PayPal email (where you get paid)"));
+  c.append(textInput("email", "you@example.com", d.payoutEmail));
+  if (d.feePercent > 0) {
+    const n = netFor(d);
+    c.append(el("div", "hint", `If the buyer releases $${d.amount}, you receive $${n.net} after a ${d.feePercent}% platform fee ($${n.fee}).`));
+  } else {
+    c.append(el("div", "hint", `If the buyer releases the payment, you receive $${d.amount}.`));
+  }
 
   c.append(el("label", "", "Review copy: text"));
   c.append(textarea("review", "Write or paste the work for the buyer to test", 5, d.reviewCopy));
@@ -562,7 +634,11 @@ function submitCard(d) {
 
   const submit = el("button", "btn-primary", d.status === "delivered" ? "Resubmit for AI review" : "Submit for AI review");
   submit.onclick = async () => {
-    const body = { reviewCopy: draft.review ?? d.reviewCopy, finalWork: draft.final ?? d.finalWork };
+    const body = {
+      payoutEmail: (draft.email ?? d.payoutEmail ?? "").trim(),
+      reviewCopy: draft.review ?? d.reviewCopy,
+      finalWork: draft.final ?? d.finalWork,
+    };
     if (draft.reviewFile) body.reviewFile = draft.reviewFile;
     if (draft.finalFile) body.finalFile = draft.finalFile;
     const ok = await act("deliver", body, submit, "AI is reviewing...");
@@ -595,7 +671,8 @@ function renderFreelancer(d) {
     app.append(w);
   }
   if (canSubmit(d)) app.append(submitCard(d));
-  if (!isActive(d)) app.append(finishedCard(d));
+  if (d.status === "released") app.append(payoutCard(d));
+  else if (!isActive(d)) app.append(finishedCard(d));
 }
 
 function renderWaitingForPayment(d) {
@@ -618,7 +695,7 @@ function renderWaitingForPayment(d) {
 }
 
 let current = null;
-const fp = (d) => `${d.status}|${d.events.length}|${d.changeRequests}|${verdictOf(d) || ""}`;
+const fp = (d) => `${d.status}|${d.events.length}|${d.changeRequests}|${verdictOf(d) || ""}|${d.payout ? d.payout.status : ""}`;
 
 function render(d) {
   current = d;
@@ -650,7 +727,8 @@ async function load() {
 
 async function poll() {
   if (document.hidden || !dealId || !current) return;
-  if (current.status === "released" || current.status === "refunded") return;
+  const payoutDone = current.payout && current.payout.status !== "pending" && current.payout.status !== "sending";
+  if (current.status === "refunded" || (current.status === "released" && payoutDone)) return;
   try {
     const d = await api(`/api/deals/${dealId}`);
     if (fp(d) !== fingerprint) render(d);

@@ -1,7 +1,7 @@
 import express from "express";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import * as paypal from "./paypalClient.js";
-import { verifyDeliverable } from "./verifier.js";
+   import { verifyDeliverable, improveCriteria } from "./verifier.js";
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
@@ -428,6 +428,21 @@ app.post("/api/deals/:id/refund", wrap(async (req, res) => {
   res.json(viewFor(deal, "buyer"));
 }));
 
+   // AI helper: flags vague criteria and suggests checkable rewrites (rate limited).
+   let helpCalls = [];
+   app.post("/api/criteria-help", wrap(async (req, res) => {
+     const now = Date.now();
+     helpCalls = helpCalls.filter((t) => now - t < 60000);
+     if (helpCalls.length >= 20) throw fail(429, "Too many requests right now. Try again in a minute.");
+     helpCalls.push(now);
+     const title = String(req.body.title || "").trim().slice(0, 120);
+     const criteria = Array.isArray(req.body.criteria)
+       ? req.body.criteria.map((c) => String(c).trim()).filter(Boolean).slice(0, 8)
+       : [];
+     if (!criteria.length) throw fail(400, "Write at least one criterion first");
+     if (criteria.some((c) => c.length > 300)) throw fail(400, "Each criterion must be under 300 characters");
+     res.json({ items: await improveCriteria({ title, criteria }) });
+   }));
 // Errors that happen before a route runs, such as a request body that is too large.
 app.use((err, req, res, next) => {
   const tooLarge = err.type === "entity.too.large";

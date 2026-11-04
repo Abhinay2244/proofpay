@@ -283,6 +283,43 @@ function showCreate() {
   const criteria = el("textarea"); criteria.rows = 4; criteria.placeholder = "One criterion per line";
   card.append(criteria);
   card.append(el("div", "hint", "The AI checks the work against each line, so keep them specific and checkable."));
+    const helpBtn = el("button", "btn-secondary", "Check my criteria with AI");
+  helpBtn.style.marginTop = "10px";
+  const helpBox = el("div");
+  const replaceLine = (original, better) => {
+    const lines = criteria.value.split("\n");
+    const at = lines.findIndex((l) => l.trim() === original);
+    if (at === -1) return false;
+    lines[at] = better;
+    criteria.value = lines.join("\n");
+    return true;
+  };
+  helpBtn.onclick = async () => {
+    const list = criteria.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (!list.length) { toast("Write at least one criterion first."); return; }
+    helpBtn.disabled = true; helpBtn.textContent = "AI is reading your criteria...";
+    try {
+      const r = await api("/api/criteria-help", "POST", { title: title.value.trim(), criteria: list }, null);
+      helpBox.replaceChildren();
+      const vague = r.items.filter((it) => it.vague && it.better && it.better !== it.original);
+      if (!vague.length) helpBox.append(el("p", "note", "These criteria look specific and checkable. Nice."));
+      vague.forEach((it) => {
+        const b = el("div", "card");
+        b.style.marginTop = "10px";
+        b.append(el("div", "reason", `Too vague: ${it.original}`));
+        if (it.problem) b.append(el("div", "note", it.problem));
+        b.append(el("div", "box", it.better));
+        const use = button("Use this version", "btn-secondary", () => {
+          if (replaceLine(it.original, it.better)) b.remove();
+          else toast("That line changed. Check your criteria again.");
+        });
+        const row = el("div", "row"); row.append(use); b.append(row);
+        helpBox.append(b);
+      });
+    } catch (e) { toast(e.message); }
+    helpBtn.disabled = false; helpBtn.textContent = "Check my criteria with AI";
+  };
+  card.append(helpBtn, helpBox);
 
   const row = el("div", "row");
   const go = el("button", "btn-primary", "Create deal and pay with PayPal");

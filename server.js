@@ -1,6 +1,7 @@
 import express from "express";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import * as paypal from "./paypalClient.js";
+import { loadDeals, saveChanged } from "./db.js";
    import { verifyDeliverable, improveCriteria } from "./verifier.js";
 
 const PORT = process.env.PORT || 3000;
@@ -28,8 +29,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const app = express();
 app.use(express.json({ limit: "7mb" })); // two 2 MB files become about 5.4 MB as base64
 app.use(express.static("public"));
+// After every API request, save any deals that changed, so a restart does not lose them.
+app.use((req, res, next) => { res.on("finish", () => saveChanged(deals)); next(); });
 
-const deals = new Map(); // in memory: cleared when the server restarts
+const deals = new Map(); // working copy in memory; saved to the database when DATABASE_URL is set
+await loadDeals(deals);
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
@@ -509,5 +513,10 @@ setInterval(async () => {
     }
   }
 }, 10000);
+
+setInterval(() => saveChanged(deals), 3000); // also saves changes made by the timers above
+const shutdown = async () => { await saveChanged(deals); process.exit(0); };
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 app.listen(PORT, () => console.log(`ProofPay running at ${BASE_URL}`));
